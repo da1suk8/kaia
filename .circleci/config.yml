@@ -340,8 +340,10 @@ commands:
           no_output_timeout: 30m
           command: |
             make kcn
-            git clone https://github.com/kaiachain/kaia-rpc-tester.git
+            git clone https://github.com/da1suk8/kaia-rpc-tester.git
             cd kaia-rpc-tester
+            git checkout ci-fix
+            # git checkout 4625cb403599264c1be14621eddbac8e2cbf9264
             cp ../build/bin/kcn script/cn/bin/
             cd script
             ./set_CNonly.sh
@@ -352,7 +354,19 @@ commands:
             python3 -m venv venv
             source venv/bin/activate
             pip3 install -r requirements.txt
-            python main.py
+            # # Wait for RPC to be ready
+            # until curl -s -H 'Content-Type: application/json' -X POST --data '{"jsonrpc":"2.0","method":"web3_clientVersion","params":[],"id":1}' http://localhost:8551 | grep -q '"result"'; do
+            #   echo "Waiting for RPC (http://localhost:8551) ..."; sleep 1;
+            # done
+            # echo "RPC is up. Checking CN nodekey address balance for Auction module (>= 10 KAIA required)."
+            # python3 test.py
+            # # Inspect registered RPC modules and logs for auction
+            # echo "Fetching rpc_modules ..."
+            # curl -s -H 'Content-Type: application/json' -X POST --data '{"jsonrpc":"2.0","method":"rpc_modules","params":[],"id":1}' http://localhost:8551 | tee /tmp/rpc_modules.json
+            # echo "rpc_modules contains auction?:" && (grep -q '"auction"' /tmp/rpc_modules.json && echo YES || echo NO)
+            # echo "Searching logs for AuctionModule started ..."
+            # grep -i "AuctionModule started" script/cn/data/kcn/logs/kcnd.out || true
+            python3 main.py
 
 jobs:
   build:
