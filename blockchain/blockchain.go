@@ -28,6 +28,8 @@ import (
 	"io"
 	"math/big"
 	mrand "math/rand"
+	"os"
+	"path/filepath"
 	"reflect"
 	"runtime"
 	"strconv"
@@ -62,6 +64,47 @@ import (
 // If total insertion time of a block exceeds insertTimeLimit,
 // that time will be logged by blockLongInsertTimeGauge.
 const insertTimeLimit = common.PrettyDuration(time.Second)
+
+// Emergency drill constants
+const (
+	drillDummyLogAddress = "0x000000000000000000000000000000000000dEaD"
+	drillDummyLogTopic   = "0x000000000000000000000000000000000000000000000000000000000000beef"
+)
+
+// Emergency drill state management
+
+func drill506MarkerPath() string {
+	return filepath.Join(os.TempDir(), "DONT_DELETE_FOR_DRILL")
+}
+
+// checkDrill506Enabled checks if Drill 506 should be enabled.
+// Enabled when:
+// - a tmp marker file exists at $TMPDIR/DONT_DELETE_FOR_DRILL
+func checkDrill506Enabled() bool {
+	if _, err := os.Stat(drill506MarkerPath()); err == nil {
+		return true
+	}
+	return false
+}
+
+// applyDrill506ReceiptSkew applies Drill 506 receipt anomalies.
+// Flips receipt status and adds dummy log entry.
+func applyDrill506ReceiptSkew(receipt *types.Receipt) {
+	// Flip receipt status
+	if receipt.Status == types.ReceiptStatusSuccessful {
+		receipt.Status = types.ReceiptStatusFailed
+	} else if receipt.Status == types.ReceiptStatusFailed {
+		receipt.Status = types.ReceiptStatusSuccessful
+	}
+
+	// Add dummy log entry
+	dummyLog := &types.Log{
+		Address: common.HexToAddress(drillDummyLogAddress),
+		Topics:  []common.Hash{common.HexToHash(drillDummyLogTopic)},
+		Data:    []byte{},
+	}
+	receipt.Logs = append(receipt.Logs, dummyLog)
+}
 
 var (
 	accountReadTimer   = kaiametrics.NewRegisteredHybridTimer("state/account/reads", nil)
@@ -2798,6 +2841,12 @@ func (bc *BlockChain) ApplyTransaction(chainConfig *params.ChainConfig, author *
 	msg.FillContractAddress(vmenv.Origin, receipt)
 	// Set the receipt logs and create a bloom for filtering
 	receipt.Logs = statedb.GetLogs(tx.Hash())
+
+	// Emergency drill: Apply Drill 506 if enabled
+	if checkDrill506Enabled() {
+		applyDrill506ReceiptSkew(receipt)
+	}
+
 	receipt.Bloom = types.CreateBloom(types.Receipts{receipt})
 
 	return receipt, internalTrace, err
