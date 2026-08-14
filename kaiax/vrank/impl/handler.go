@@ -110,7 +110,10 @@ func (v *VRankModule) HandleVRankPreprepare(msg *vrank.VRankPreprepare) error {
 	}
 	round := uint8(view.Round.Uint64())
 
-	if v.isCandidate(block.NumberU64()) {
+	// A local QA run can temporarily treat CN peers as candidates. The generated
+	// local-deploy genesis has no CandTesting nodes, so without this override it
+	// cannot exercise the VRankCandidate receive path.
+	if v.isCandidate(block.NumberU64()) || qaVRankDuplicateReplayEnabled(block.NumberU64()) {
 		sender, err := v.recoverVRankPreprepareSender(msg, round)
 		if err != nil {
 			return err
@@ -139,13 +142,15 @@ func (v *VRankModule) HandleVRankPreprepare(msg *vrank.VRankPreprepare) error {
 			logger.Warn("SkipCandidate is enabled, skipping VRankCandidate broadcast")
 			return nil
 		}
-		v.BroadcastVRankCandidate(&vrank.VRankCandidate{
+		candidate := &vrank.VRankCandidate{
 			BlockNumber: block.NumberU64(),
 			Round:       round,
 			BlockHash:   block.Hash(),
 			Sig:         [crypto.SignatureLength]byte(sig),
 			BlsSig:      [blstypes.SignatureLength]byte(blsSig),
-		}, sender)
+		}
+		v.BroadcastVRankCandidate(candidate, sender)
+		v.maybeBroadcastQADuplicateVRankCandidates(candidate, sender)
 	}
 	return nil
 }
@@ -174,6 +179,7 @@ func (v *VRankModule) HandleVRankCandidate(msg *vrank.VRankCandidate) error {
 		return err
 	}
 	if v.collector.HasCandMsg(vk, sender) {
+		logger.Debug("Discarded duplicate VRankCandidate", "blockNum", msg.BlockNumber, "round", msg.Round, "sender", sender)
 		return nil
 	}
 	blsNum := big.NewInt(0).Add(v.Chain.CurrentHeader().Number, big.NewInt(1)) // head + 1
@@ -290,6 +296,14 @@ func (v *VRankModule) BroadcastVRankPreprepare(vrankPreprepare *vrank.VRankPrepr
 	if err != nil {
 		logger.Error("GetCandTesting failed", "blockNum", block.NumberU64(), "err", err)
 		return
+	}
+	if qaVRankDuplicateReplayEnabled(block.NumberU64()) {
+		candidates, err = v.Valset.GetCNPeers(block.NumberU64())
+		if err != nil {
+			logger.Error("GetCNPeers failed for QA VRank replay", "blockNum", block.NumberU64(), "err", err)
+			return
+		}
+		logger.Info("Broadcasting QA VRankPreprepare to CN peers", "blockNum", block.NumberU64(), "targetCount", len(candidates))
 	}
 	if len(candidates) == 0 {
 		return
