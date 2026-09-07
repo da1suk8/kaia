@@ -48,6 +48,7 @@ func TestSanityCheckSignaturesLength(t *testing.T) {
 	require.False(t, SanityCheckSignatures(nil, TxTypeValueTransfer))
 	require.True(t, SanityCheckSignatures(validTestSignatures(1), TxTypeValueTransfer))
 	require.True(t, SanityCheckSignatures(validTestSignatures(maxSignatures), TxTypeValueTransfer))
+	// no cap here by design: DecodeRLP must keep accepting pre-Istanbul blocks; the cap is enforced at ingress
 	require.True(t, SanityCheckSignatures(validTestSignatures(maxSignatures+1), TxTypeValueTransfer))
 }
 
