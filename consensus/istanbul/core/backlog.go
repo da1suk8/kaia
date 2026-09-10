@@ -44,11 +44,12 @@ const (
 	// it carries an entire block, so one count covering both would be either too
 	// loose for PREPREPARE or too tight for the small messages.
 
-	// maxBacklogSenders sizes the global count limits. It is above the committee
-	// sizes used in practice, so that honest senders lagging a few sequences
-	// behind cannot exhaust the global budget before reaching their own.
-	// istanbul.committeesize has no upper bound, and a committee larger than this
-	// only means the global limit binds before the per-sender one.
+	// maxBacklogSenders sizes the global count limits, so that honest senders
+	// lagging a few sequences behind cannot exhaust the global budget before
+	// reaching their own. handleMsg only accepts the qualified council, so the
+	// council bounds the distinct senders. 50 is the default cap on active and
+	// paused validators (DefaultMaxValActivePausedCount), not a hard bound: a
+	// larger council only means the global limit binds before the per-sender one.
 	maxBacklogSenders = 50
 
 	// Keep only a small future-sequence window so far-future messages cannot
