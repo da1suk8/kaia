@@ -22,6 +22,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/kaiachain/kaia/blockchain/types"
 	"github.com/kaiachain/kaia/common"
 	"github.com/kaiachain/kaia/common/prque"
 	"github.com/kaiachain/kaia/consensus/bft"
@@ -33,13 +34,13 @@ import (
 func newTestBacklogCore() *core {
 	qualified := valset.NewAddressSet(nil)
 	return &core{
-		address:            common.HexToAddress("0xdead"),
-		state:              StateAcceptRequest,
-		logger:             logger.NewWith(),
-		backlogs:           make(map[common.Address]*prque.Prque),
-		backlogsMu:         new(sync.Mutex),
-		backlogSenderBytes: make(map[common.Address]uint64),
-		current:            newRoundState(&bft.View{Sequence: big.NewInt(1), Round: big.NewInt(0)}, qualified, common.Hash{}, nil, nil, nil),
+		address:        common.HexToAddress("0xdead"),
+		state:          StateAcceptRequest,
+		logger:         logger.NewWith(),
+		backlogs:       make(map[common.Address]*prque.Prque),
+		backlogsMu:     new(sync.Mutex),
+		backlogSenders: make(map[common.Address]backlogUsage),
+		current:        newRoundState(&bft.View{Sequence: big.NewInt(1), Round: big.NewInt(0)}, qualified, common.Hash{}, nil, nil, nil),
 	}
 }
 
@@ -59,6 +60,16 @@ func newTestBacklogMessage(t *testing.T, sequence int64) *bft.Message {
 	return &bft.Message{Code: bft.MsgPrepare, Msg: payload}
 }
 
+func newTestBacklogPreprepare(t *testing.T, sequence int64) *bft.Message {
+	t.Helper()
+	payload, err := bft.Encode(&bft.Preprepare{
+		View:     &bft.View{Sequence: big.NewInt(sequence), Round: big.NewInt(0)},
+		Proposal: types.NewBlockWithHeader(&types.Header{Number: big.NewInt(sequence)}),
+	})
+	require.NoError(t, err)
+	return &bft.Message{Code: bft.MsgPreprepare, Msg: payload}
+}
+
 func TestStoreBacklogBoundsMessagesPerSender(t *testing.T) {
 	src := common.HexToAddress("0x1")
 	c := newTestBacklogCore()
@@ -69,21 +80,21 @@ func TestStoreBacklogBoundsMessagesPerSender(t *testing.T) {
 	}
 
 	assert.Equal(t, maxBacklogMessagesPerSender, c.backlogs[src].Size())
-	assert.Equal(t, maxBacklogMessagesPerSender, c.backlogMessageCount)
+	assert.Equal(t, maxBacklogMessagesPerSender, c.backlogTotal.messages)
 }
 
 func TestStoreBacklogBoundsPayloadBytesPerSender(t *testing.T) {
 	src := common.HexToAddress("0x1")
 	msg := newTestBacklogMessage(t, 2)
 	c := newTestBacklogCore()
-	msg.Signature = make([]byte, int(maxBacklogPayloadBytesPerSender-backlogMessageBytes(msg)+1))
+	msg.Signature = make([]byte, int(maxBacklogPayloadBytesPerSender-retainedMessageBytes(msg)+1))
 
 	c.storeBacklog(msg, src)
 
 	assert.Empty(t, c.backlogs)
-	assert.Empty(t, c.backlogSenderBytes)
-	assert.Zero(t, c.backlogMessageCount)
-	assert.Zero(t, c.backlogPayloadBytes)
+	assert.Empty(t, c.backlogSenders)
+	assert.Zero(t, c.backlogTotal.messages)
+	assert.Zero(t, c.backlogTotal.bytes)
 }
 
 func TestStoreBacklogBoundsMessagesAcrossSenders(t *testing.T) {
@@ -101,7 +112,7 @@ func TestStoreBacklogBoundsMessagesAcrossSenders(t *testing.T) {
 	rejected := backlogSender(senders + 1)
 	c.storeBacklog(msg, rejected)
 
-	assert.Equal(t, maxBacklogMessages, c.backlogMessageCount)
+	assert.Equal(t, maxBacklogMessages, c.backlogTotal.messages)
 	assert.Len(t, c.backlogs, senders)
 	assert.NotContains(t, c.backlogs, rejected)
 }
@@ -112,7 +123,7 @@ func TestStoreBacklogBoundsPayloadBytesAcrossSenders(t *testing.T) {
 	senders := maxBacklogPayloadBytes / maxBacklogPayloadBytesPerSender
 	msg := newTestBacklogMessage(t, 2)
 	// One message per sender, sized to exactly the per-sender byte cap.
-	msg.Signature = make([]byte, int(maxBacklogPayloadBytesPerSender-backlogMessageBytes(msg)))
+	msg.Signature = make([]byte, int(maxBacklogPayloadBytesPerSender-retainedMessageBytes(msg)))
 	c := newTestBacklogCore()
 
 	for sender := 1; sender <= senders; sender++ {
@@ -121,8 +132,8 @@ func TestStoreBacklogBoundsPayloadBytesAcrossSenders(t *testing.T) {
 	rejected := backlogSender(senders + 1)
 	c.storeBacklog(msg, rejected)
 
-	assert.Equal(t, senders, c.backlogMessageCount)
-	assert.Equal(t, uint64(maxBacklogPayloadBytes), c.backlogPayloadBytes)
+	assert.Equal(t, senders, c.backlogTotal.messages)
+	assert.Equal(t, uint64(maxBacklogPayloadBytes), c.backlogTotal.bytes)
 	assert.NotContains(t, c.backlogs, rejected)
 }
 
@@ -134,7 +145,7 @@ func TestStoreBacklogBoundsFutureSequence(t *testing.T) {
 	c.storeBacklog(newTestBacklogMessage(t, 2+maxBacklogSequencesAhead), src)
 
 	assert.Equal(t, 1, c.backlogs[src].Size())
-	assert.Equal(t, 1, c.backlogMessageCount)
+	assert.Equal(t, 1, c.backlogTotal.messages)
 }
 
 func TestBacklogRejectsSequenceOutsideUint64(t *testing.T) {
@@ -156,9 +167,9 @@ func TestStoreBacklogSkipsUndecodableMessage(t *testing.T) {
 	c.storeBacklog(&bft.Message{Code: bft.MsgPrepare, Msg: []byte{0xff}}, src)
 
 	assert.Empty(t, c.backlogs)
-	assert.Empty(t, c.backlogSenderBytes)
-	assert.Zero(t, c.backlogMessageCount)
-	assert.Zero(t, c.backlogPayloadBytes)
+	assert.Empty(t, c.backlogSenders)
+	assert.Zero(t, c.backlogTotal.messages)
+	assert.Zero(t, c.backlogTotal.bytes)
 }
 
 func TestProcessBacklogFreesCapacityForLaterMessages(t *testing.T) {
@@ -174,13 +185,13 @@ func TestProcessBacklogFreesCapacityForLaterMessages(t *testing.T) {
 	c.processBacklog()
 
 	assert.Empty(t, c.backlogs)
-	assert.Empty(t, c.backlogSenderBytes)
-	assert.Zero(t, c.backlogMessageCount)
-	assert.Zero(t, c.backlogPayloadBytes)
+	assert.Empty(t, c.backlogSenders)
+	assert.Zero(t, c.backlogTotal.messages)
+	assert.Zero(t, c.backlogTotal.bytes)
 
 	c.storeBacklog(msg, src)
 	assert.Equal(t, 1, c.backlogs[src].Size())
-	assert.Equal(t, 1, c.backlogMessageCount)
+	assert.Equal(t, 1, c.backlogTotal.messages)
 }
 
 func TestProcessBacklogRemovesMessageWithNilView(t *testing.T) {
@@ -192,19 +203,91 @@ func TestProcessBacklogRemovesMessageWithNilView(t *testing.T) {
 
 	c.backlogs[src] = prque.New()
 	c.backlogs[src].Push(msg, 0)
-	c.backlogMessageCount = 1
-	c.backlogSenderBytes[src] = backlogMessageBytes(msg)
-	c.backlogPayloadBytes = backlogMessageBytes(msg)
+	c.addBacklogMessage(src, msg.Code, retainedMessageBytes(msg))
 	c.processBacklog()
 
 	assert.Empty(t, c.backlogs)
-	assert.Empty(t, c.backlogSenderBytes)
-	assert.Zero(t, c.backlogMessageCount)
-	assert.Zero(t, c.backlogPayloadBytes)
+	assert.Empty(t, c.backlogSenders)
+	assert.Zero(t, c.backlogTotal.messages)
+	assert.Zero(t, c.backlogTotal.bytes)
 }
 
 func TestExceedsBacklogLimit(t *testing.T) {
 	assert.False(t, exceedsBacklogLimit(15, 1, 16))
 	assert.True(t, exceedsBacklogLimit(15, 2, 16))
 	assert.True(t, exceedsBacklogLimit(0, 17, 16))
+}
+
+func TestStoreBacklogBoundsPreprepareMessagesPerSender(t *testing.T) {
+	src := common.HexToAddress("0x1")
+	c := newTestBacklogCore()
+	msg := newTestBacklogPreprepare(t, 2)
+
+	for range maxBacklogPreprepareMessagesPerSender + 1 {
+		c.storeBacklog(msg, src)
+	}
+
+	assert.Equal(t, maxBacklogPreprepareMessagesPerSender, c.backlogs[src].Size())
+	assert.Equal(t, maxBacklogPreprepareMessagesPerSender, c.backlogTotal.preprepares)
+}
+
+func TestStoreBacklogBoundsPreprepareMessagesAcrossSenders(t *testing.T) {
+	require.Zero(t, maxBacklogPreprepareMessages%maxBacklogPreprepareMessagesPerSender,
+		"the test fills the global cap with senders that each reach the per-sender cap")
+	senders := maxBacklogPreprepareMessages / maxBacklogPreprepareMessagesPerSender
+	c := newTestBacklogCore()
+	msg := newTestBacklogPreprepare(t, 2)
+
+	for sender := 1; sender <= senders; sender++ {
+		for range maxBacklogPreprepareMessagesPerSender {
+			c.storeBacklog(msg, backlogSender(sender))
+		}
+	}
+	rejected := backlogSender(senders + 1)
+	c.storeBacklog(msg, rejected)
+
+	assert.Equal(t, maxBacklogPreprepareMessages, c.backlogTotal.preprepares)
+	assert.NotContains(t, c.backlogs, rejected)
+}
+
+// A sender that has filled its PREPREPARE budget must still be able to retain
+// the small messages of the sequences it is waiting for.
+func TestStoreBacklogCountsPreprepareApartFromOtherMessages(t *testing.T) {
+	src := common.HexToAddress("0x1")
+	c := newTestBacklogCore()
+
+	for range maxBacklogPreprepareMessagesPerSender {
+		c.storeBacklog(newTestBacklogPreprepare(t, 2), src)
+	}
+	c.storeBacklog(newTestBacklogMessage(t, 2), src)
+
+	assert.Equal(t, maxBacklogPreprepareMessagesPerSender, c.backlogTotal.preprepares)
+	assert.Equal(t, 1, c.backlogTotal.messages)
+}
+
+// An honest committee lagging within the retained sequence window must not be
+// able to fill the global budget: every member sends a PREPARE, a COMMIT and a
+// ROUND CHANGE for each retained sequence.
+func TestBacklogGlobalLimitFitsLaggingCommittee(t *testing.T) {
+	const messagesPerSequencePerSender = 3
+
+	assert.GreaterOrEqual(t, maxBacklogMessages,
+		maxBacklogSenders*maxBacklogSequencesAhead*messagesPerSequencePerSender)
+}
+
+func TestProcessBacklogReleasesPreprepareAccounting(t *testing.T) {
+	src := common.HexToAddress("0x1")
+	c := newTestBacklogCore()
+
+	c.storeBacklog(newTestBacklogPreprepare(t, 2), src)
+	c.storeBacklog(newTestBacklogMessage(t, 2), src)
+	c.current = newRoundState(&bft.View{Sequence: big.NewInt(3), Round: big.NewInt(0)},
+		valset.NewAddressSet(nil), common.Hash{}, nil, nil, nil)
+	c.processBacklog()
+
+	assert.Empty(t, c.backlogs)
+	assert.Empty(t, c.backlogSenders)
+	assert.Zero(t, c.backlogTotal.preprepares)
+	assert.Zero(t, c.backlogTotal.messages)
+	assert.Zero(t, c.backlogTotal.bytes)
 }
