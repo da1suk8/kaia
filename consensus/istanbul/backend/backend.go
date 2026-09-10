@@ -108,6 +108,11 @@ type backend struct {
 	// Protects the signer fields
 	candidatesLock sync.RWMutex
 
+	// proposalSkips is the number of upcoming proposer turns this node must
+	// skip. DevNet-only fault injection set through istanbul_setRoundChange;
+	// zero in normal operation.
+	proposalSkips atomic.Int64
+
 	// event subscription for ChainHeadEvent event
 	broadcaster consensus.Broadcaster
 
@@ -149,6 +154,36 @@ func (sb *backend) NodeType() common.ConnType {
 
 func (sb *backend) IsPermissionlessAt(num uint64) bool {
 	return sb.chain.Config().IsPermissionlessForkEnabled(new(big.Int).SetUint64(num))
+}
+
+// SetProposalSkips arms DevNet fault injection: the next `count` times this
+// node becomes proposer it will not send a PRE-PREPARE, so the round-change
+// timer expires and the round advances. Passing 0 disarms it.
+// Driven by the istanbul_setRoundChange RPC; not used in normal operation.
+func (sb *backend) SetProposalSkips(count int64) {
+	if count < 0 {
+		count = 0
+	}
+	sb.proposalSkips.Store(count)
+}
+
+// ProposalSkips returns the number of proposer turns still to be skipped.
+func (sb *backend) ProposalSkips() int64 {
+	return sb.proposalSkips.Load()
+}
+
+// ConsumeProposalSkip reports whether this proposer turn must be skipped,
+// decrementing the pending count when it does.
+func (sb *backend) ConsumeProposalSkip() bool {
+	for {
+		remaining := sb.proposalSkips.Load()
+		if remaining <= 0 {
+			return false
+		}
+		if sb.proposalSkips.CompareAndSwap(remaining, remaining-1) {
+			return true
+		}
+	}
 }
 
 // initSealState initializes state for Seal operation.

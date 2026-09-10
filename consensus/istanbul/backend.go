@@ -78,4 +78,10 @@ type Backend interface {
 
 	// IsPermissionlessAt reports whether the permissionless fork is enabled at num.
 	IsPermissionlessAt(num uint64) bool
+
+	// ConsumeProposalSkip reports whether this node should skip proposing now,
+	// decrementing the pending skip count when it does. DevNet-only fault
+	// injection driven by the istanbul_setRoundChange RPC; always false unless
+	// that RPC has been called.
+	ConsumeProposalSkip() bool
 }

@@ -149,6 +149,20 @@ func (mr *MockBackendMockRecorder) IsPermissionlessAt(arg0 interface{}) *gomock.
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsPermissionlessAt", reflect.TypeOf((*MockBackend)(nil).IsPermissionlessAt), arg0)
 }
 
+// ConsumeProposalSkip mocks base method.
+func (m *MockBackend) ConsumeProposalSkip() bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ConsumeProposalSkip")
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// ConsumeProposalSkip indicates an expected call of ConsumeProposalSkip.
+func (mr *MockBackendMockRecorder) ConsumeProposalSkip() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ConsumeProposalSkip", reflect.TypeOf((*MockBackend)(nil).ConsumeProposalSkip))
+}
+
 // LastProposal mocks base method.
 func (m *MockBackend) LastProposal() (bft.Proposal, common.Address) {
 	m.ctrl.T.Helper()

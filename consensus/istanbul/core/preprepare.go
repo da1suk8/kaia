@@ -43,6 +43,15 @@ func (c *core) sendPreprepare(request *bft.Request) {
 	// If I'm the proposer and I have the same sequence with the proposal
 	if c.current.Sequence().Cmp(request.Proposal.Number()) == 0 && c.isProposer() {
 		curView := c.currentView()
+
+		// DevNet fault injection: skip this proposal so the round-change timer
+		// expires and the round advances. No-op unless istanbul_setRoundChange
+		// armed it.
+		if c.backend.ConsumeProposalSkip() {
+			logger.Warn("[DevNet] Skipping PRE-PREPARE to force a round change", "view", curView)
+			return
+		}
+
 		preprepare, err := bft.Encode(&bft.Preprepare{
 			View:     curView,
 			Proposal: request.Proposal,
