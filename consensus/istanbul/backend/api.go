@@ -132,3 +132,20 @@ func resolveRpcNumber(chain consensus.ChainReader, number *rpc.BlockNumber, allo
 		return num, nil
 	}
 }
+
+// SetRoundChange arms DevNet fault injection on this node: the next `count`
+// times it becomes proposer it will not send a proposal, so the round-change
+// timer expires and the round advances. Each skip adds one proposal failure to
+// this node's PFS. Pass 0 to disarm. Returns the value that was set.
+//
+// DevNet only. It exists to exercise the KIP-286 PFS violation transitions,
+// which cannot be reached on a healthy network.
+func (api *API) SetRoundChange(count int64) int64 {
+	api.istanbul.SetProposalSkips(count)
+	return api.istanbul.ProposalSkips()
+}
+
+// GetRoundChange returns how many proposer turns are still to be skipped.
+func (api *API) GetRoundChange() int64 {
+	return api.istanbul.ProposalSkips()
+}

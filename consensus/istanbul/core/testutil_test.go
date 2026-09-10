@@ -626,6 +626,10 @@ func (b *scenarioBackend) IsPermissionlessAt(number uint64) bool {
 	return b.chainConfig.IsPermissionlessForkEnabled(new(big.Int).SetUint64(number))
 }
 
+// ConsumeProposalSkip is the DevNet fault-injection hook (istanbul_setRoundChange);
+// the scenario backend never arms it.
+func (b *scenarioBackend) ConsumeProposalSkip() bool { return false }
+
 func (b *scenarioBackend) Sign(data []byte) ([]byte, error) {
 	return crypto.Sign(crypto.Keccak256(data), b.key)
 }
