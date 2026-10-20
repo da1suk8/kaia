@@ -184,6 +184,9 @@ func (c *core) handlePreprepare(msg *bft.Message, src common.Address) error {
 		return err
 	}
 
+	// QA only: decide whether this height is the round-split height H.
+	c.qaSplitMaybeArm(preprepare, src)
+
 	// Here is about to accept the PRE-PREPARE
 	if c.state == StateAcceptRequest {
 		if c.isPermissionlessAt(preprepare.View.Sequence.Uint64()) {

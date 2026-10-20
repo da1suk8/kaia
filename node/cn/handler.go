@@ -1514,6 +1514,10 @@ func handleNewBlockHashesMsg(pm *ProtocolManager, p Peer, msg p2p.Msg) error {
 	// Mark the hashes as present at the remote node
 	// Schedule all the unknown hashes for retrieval
 	for _, block := range announces {
+		if istanbul.QASplit.DropBlock(block.Number) { // QA only
+			logger.Warn("QA split: ignoring announced block", "num", block.Number, "hash", block.Hash, "peer", p.GetID())
+			continue
+		}
 		p.AddToKnownBlocks(block.Hash)
 
 		if maxTD < block.Number {
@@ -1609,6 +1613,11 @@ func handleNewBlockMsg(pm *ProtocolManager, p Peer, msg p2p.Msg) error {
 	}
 	request.Block.ReceivedAt = msg.ReceivedAt
 	request.Block.ReceivedFrom = p
+
+	if istanbul.QASplit.DropBlock(request.Block.NumberU64()) { // QA only
+		logger.Warn("QA split: dropping propagated block", "num", request.Block.NumberU64(), "hash", request.Block.Hash(), "peer", p.GetID())
+		return nil
+	}
 
 	// Mark the peer as owning the block and schedule it for import
 	p.AddToKnownBlocks(request.Block.Hash())

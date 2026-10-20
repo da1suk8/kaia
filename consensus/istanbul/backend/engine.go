@@ -157,6 +157,9 @@ func (sb *backend) Start(chain consensus.ChainReader, executor consensus.Executo
 	if sb.coreStarted.Load() {
 		return istanbul.ErrStartedEngine
 	}
+	if cfg := istanbul.QASplit.Config(); cfg.Enabled { // QA only
+		sb.logger.Warn("QA split: enabled", "holder", cfg.Holder, "mode", cfg.Mode, "minHeight", cfg.MinHeight, "epoch", cfg.Epoch)
+	}
 
 	// clear previous data
 	sb.sealMu.Lock()

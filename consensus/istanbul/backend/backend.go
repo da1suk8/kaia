@@ -287,6 +287,7 @@ func (sb *backend) GossipSubPeer(prevHash common.Hash, payload []byte) {
 	if targets == nil {
 		return
 	}
+	targets = sb.qaSplitFilterTargets(targets, payload) // QA only; identity unless armed
 	hash := istanbul.RLPHash(payload)
 	sb.knownMessages.Add(hash, true)
 
