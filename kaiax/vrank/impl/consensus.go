@@ -23,6 +23,7 @@ import (
 
 	"github.com/kaiachain/kaia/blockchain/types"
 	"github.com/kaiachain/kaia/common"
+	"github.com/kaiachain/kaia/consensus/istanbul"
 	"github.com/kaiachain/kaia/kaiax/valset"
 	"github.com/kaiachain/kaia/kaiax/vrank"
 )
@@ -204,6 +205,9 @@ func (v *VRankModule) parentRoundCertificate(number uint64) (uint8, [][]byte, er
 // evaluateCandidateFailures reports on this proposer's own most recent prior proposal this epoch.
 func (v *VRankModule) evaluateCandidateFailures(number uint64) ([]common.Address, error) {
 	targetNum, round, ok := v.selectReportTarget(number)
+	if istanbul.QATrace() {
+		logger.Info("QA report target", "node", v.nodeID.Hex(), "height", number, "target", targetNum, "round", round, "found", ok)
+	}
 	if !ok {
 		// No reportable target: none this epoch, or it was already reported.
 		// Empty report — fail-safe.

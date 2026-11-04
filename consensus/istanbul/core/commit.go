@@ -56,6 +56,23 @@ func (c *core) sendCommitForOldBlock(view *bft.View, digest common.Hash, prevHas
 
 func (c *core) broadcastCommit(sub *proposalSubject) {
 	logger := c.logger.NewWith("state", c.state)
+	// QA fault (issue 990 / PR 1104): withhold every round-0 COMMIT at the second height N1
+	// proposes, including self-delivery. PREPARE, locking, round change and later-round COMMIT
+	// paths are unchanged. No-op unless KAIA_QA_TARGET_PROPOSER / KAIA_QA_START_HEIGHT are set.
+	if sub.View.Round.Sign() == 0 && istanbul.QADoubleReport.Config().Enabled && c.valsetModule != nil {
+		seq := sub.View.Sequence.Uint64()
+		if k, err := istanbul.QADoubleReport.Ordinal(seq, c.valsetModule.GetProposer); err != nil {
+			logger.Warn("QA ordinal failed", "height", seq, "err", err)
+		} else if k == 2 {
+			locked, lockedHash := false, common.Hash{}
+			if c.current != nil {
+				locked, lockedHash = c.current.IsHashLocked(), c.current.GetLockedHash()
+			}
+			logger.Warn("QA drop COMMIT", "height", seq, "round", sub.View.Round, "hash", sub.Digest.Hex(),
+				"locked", locked, "lockedHash", lockedHash.Hex())
+			return
+		}
+	}
 
 	encodedCommit, err := bft.Encode(&bft.Commit{View: sub.View, Digest: sub.Digest})
 	if err != nil {

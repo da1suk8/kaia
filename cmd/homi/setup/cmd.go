@@ -598,6 +598,14 @@ func makePermissionlessConfig(ctx *cli.Context, validatorAddrs []common.Address,
 
 	// Start from the genesis defaults and overwrite what this command exposes as flags.
 	config := system.MakeABv2AllocConfig(owner, specs)
+	// QA fixture only: the fifth node starts under testing via the existing
+	// initial-state override, which also maintains contract state counters.
+	if os.Getenv("KAIA_QA_CANDIDATE_LAST") == "1" {
+		if len(config.NodeInfos) != 5 {
+			log.Fatalf("QA candidate fixture requires exactly five nodes")
+		}
+		config.NodeInfos[4].State = valset.CandTesting.ToUint8()
+	}
 	config.Deployer = common.HexToAddress(deployerStr)
 	config.EpochBlockInterval = int64(ctx.Uint64(vrankEpochFlag.Name))
 	config.DataConfig.PfsThreshold = big.NewInt(ctx.Int64(pfsThresholdFlag.Name))

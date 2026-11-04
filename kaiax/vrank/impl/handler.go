@@ -26,6 +26,7 @@ import (
 	"github.com/kaiachain/kaia/blockchain/types"
 	"github.com/kaiachain/kaia/common"
 	"github.com/kaiachain/kaia/consensus/bft"
+	"github.com/kaiachain/kaia/consensus/istanbul"
 	"github.com/kaiachain/kaia/crypto"
 	"github.com/kaiachain/kaia/crypto/bls"
 	blstypes "github.com/kaiachain/kaia/crypto/bls/types"
@@ -54,6 +55,9 @@ func (v *VRankModule) HandleIstanbulPreprepare(block *types.Block, view *bft.Vie
 		if view.Round.Uint64() > maxRound {
 			logger.Debug("Skip VRankPreprepare above max round", "number", blockNum, "round", view.Round)
 			return
+		}
+		if istanbul.QATrace() {
+			logger.Info("QA solicit", "node", v.nodeID.Hex(), "height", blockNum, "round", view.Round, "hash", block.Hash().Hex())
 		}
 		v.BroadcastVRankPreprepare(&vrank.VRankPreprepare{Block: block, View: view})
 	}
@@ -152,6 +156,14 @@ func (v *VRankModule) HandleVRankPreprepare(msg *vrank.VRankPreprepare) error {
 		if current, err := v.isCurrentVRankPreprepare(block, round); err != nil || !current {
 			return err
 		}
+		// QA fault (issue 990 / PR 1104): ignore every valid solicitation at the first height N1
+		// proposes, so N1's next header reports this candidate. No-op unless the QA env is set.
+		if k, err := istanbul.QADoubleReport.Ordinal(block.NumberU64(), v.Valset.GetProposer); err != nil {
+			logger.Warn("QA ordinal failed", "node", v.nodeID.Hex(), "height", block.NumberU64(), "err", err)
+		} else if k == 1 {
+			logger.Warn("QA candidate silent", "node", v.nodeID.Hex(), "height", block.NumberU64(), "round", round, "sender", sender.Hex(), "hash", block.Hash().Hex())
+			return nil
+		}
 		v.pruneSeenPreprepare(block.NumberU64())
 		if exactReplay, conflictingView := v.markSeenPreprepare(vrank.ViewKey{N: block.NumberU64(), R: round}, block.Hash()); exactReplay {
 			// ignore seen preprepare
@@ -180,6 +192,9 @@ func (v *VRankModule) HandleVRankPreprepare(msg *vrank.VRankPreprepare) error {
 			Sig:         [crypto.SignatureLength]byte(sig),
 			BlsSig:      [blstypes.SignatureLength]byte(blsSig),
 		}, sender)
+		if istanbul.QATrace() {
+			logger.Info("QA candidate reply", "node", v.nodeID.Hex(), "height", block.NumberU64(), "round", round, "sender", sender.Hex())
+		}
 	}
 	return nil
 }
